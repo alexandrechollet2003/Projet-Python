@@ -2,6 +2,7 @@ import csv
 import hashlib
 import secrets
 from datetime import datetime, timedelta
+import random
 
 # --- CONFIGURATION ---
 FICHIER_DB = "utilisateurs.csv"
