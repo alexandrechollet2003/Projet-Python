@@ -1,206 +1,390 @@
-import csv
-import hashlib
 import secrets
+import string
+import hashlib
+import csv
 from datetime import datetime, timedelta
-import random
 
-# --- CONFIGURATION ---
-FICHIER_DB = "utilisateurs.csv"
-DUREE_VALIDITE_JOURS = 90
+# -------------------------------------------------------------
+# 1) PARAMÈTRES & VARIABLES GLOBALES
+# -------------------------------------------------------------
 
-# --- RÈGLES DE GESTION & SÉCURITÉ ---
+CSV_FILE = "users.csv"
+users_db = []
 
-def generer_login(prenom, nom):
-    """Règle : 1ère lettre prénom + nom (tout minuscule, sans espace)."""
-    if not prenom or not nom: return "inconnu"
-    nom_clean = nom.replace(" ", "").lower()
-    prenom_clean = prenom.replace(" ", "").lower()
-    return f"{prenom_clean[0]}{nom_clean}"
+VALID_SITES = ["paris", "marseille", "rennes", "grenoble"]
+VALID_ROLES = ["SUPER_ADMIN", "ADMIN_REGION", "USER"]
 
-def generer_mot_de_passe(longueur=10):
-    """Règle : Génération aléatoire (Lettres + Chiffres)."""
-    caracteres = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(caracteres) for _ in range(longueur))
 
-def hacher_pwd(mot_de_passe):
-    """Règle : Hashage SHA256 avant stockage/vérification."""
-    return hashlib.sha256(mot_de_passe.encode()).hexdigest()
+# -------------------------------------------------------------
+# 2) FONCTIONS DE SÉCURITÉ
+# -------------------------------------------------------------
 
-def calculer_expiration():
-    return (datetime.now() + timedelta(days=DUREE_VALIDITE_JOURS)).strftime("%Y-%m-%d")
+def generate_login(prenom: str, nom: str) -> str:
+    """Génère login = initiale + nom (sans suffixe si possible)."""
+    base = (prenom[0] + nom).lower()
 
-# --- GESTION DES FICHIERS (CSV) ---
+    # Vérifie collision
+    existing = {u["login"] for u in users_db}
+    login = base
 
-def charger_donnees():
-    users = []
-    if os.path.exists(FICHIER_DB):
-        with open(FICHIER_DB, mode='r', newline='', encoding='utf-8') as f:
-            try:
-                reader = csv.DictReader(f)
-                users = list(reader)
-            except csv.Error:
-                users = []
-    return users
+    i = 1
+    while login in existing:
+        login = f"{base}{i}"
+        i += 1
 
-def sauvegarder_donnees(users):
-    with open(FICHIER_DB, mode='w', newline='', encoding='utf-8') as f:
-        champs = ["login", "prenom", "nom", "role", "pwd_hash", "date_validite"]
-        writer = csv.DictWriter(f, fieldnames=champs)
+    return login
+
+
+def generate_password(length: int = 12) -> str:
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+def password_validity(days: int = 90) -> str:
+    return (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+
+
+# -------------------------------------------------------------
+# 3) CSV : CHARGEMENT & SAUVEGARDE
+# -------------------------------------------------------------
+
+def load_users():
+    """Charge le CSV en mémoire dans users_db."""
+    global users_db
+    users_db = []
+
+    try:
+        with open(CSV_FILE, mode="r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                users_db.append(dict(row))
+    except FileNotFoundError:
+        users_db = []
+
+
+def save_users():
+    """Sauvegarde complète en CSV."""
+    with open(CSV_FILE, mode="w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            "login", "prenom", "nom", "role", "site",
+            "pwd_hash", "pwd_valid_until"
+        ])
         writer.writeheader()
-        writer.writerows(users)
+        writer.writerows(users_db)
 
-# --- FONCTIONNALITÉS MÉTIER ---
 
-def ajouter_utilisateur(users):
-    print("\n--- [CRÉATION UTILISATEUR] ---")
-    prenom = input("Prénom : ").strip()
-    nom = input("Nom : ").strip()
-    role = input("Rôle (admin/patient) : ").strip().lower()
+# -------------------------------------------------------------
+# 4) CRÉATION UTILISATEUR
+# -------------------------------------------------------------
 
-    login = generer_login(prenom, nom)
-    pwd_clair = generer_mot_de_passe()
-    pwd_hash = hacher_pwd(pwd_clair)
-    validite = calculer_expiration()
+def get_valid_site():
+    while True:
+        site = input("Site (Paris / Marseille / Rennes / Grenoble) : ").strip().lower()
+        if site in VALID_SITES:
+            return site.capitalize()
+        print("❌ Site invalide !")
 
-    # Vérification doublon
-    for u in users:
-        if u['login'] == login:
-            print(f"⚠ Erreur : Le login '{login}' existe déjà.")
-            return
 
-    nouvel_user = {
+def create_user_basic(prenom: str, nom: str, role: str, site: str) -> dict:
+    login = generate_login(prenom, nom)
+    return {
         "login": login,
-        "prenom": prenom,
-        "nom": nom,
+        "prenom": prenom.capitalize(),
+        "nom": nom.capitalize(),
         "role": role,
-        "pwd_hash": pwd_hash,
-        "date_validite": validite
+        "site": site,
+        "pwd_hash": "",
+        "pwd_valid_until": "",
     }
-    
-    users.append(nouvel_user)
-    sauvegarder_donnees(users)
-    
-    print(f"✅ Utilisateur créé avec succès !")
-    print(f"   -> Login : {login}")
-    print(f"   -> Mot de passe : {pwd_clair}")
 
-def lister_utilisateurs(users):
-    print("\n--- [LISTE DES UTILISATEURS] ---")
-    print(f"{'LOGIN':<15} | {'NOM COMPLET':<20} | {'ROLE':<10}")
-    print("-" * 50)
-    for u in users:
-        nom_complet = f"{u['prenom']} {u['nom']}"
-        print(f"{u['login']:<15} | {nom_complet:<20} | {u['role']:<10}")
-    print("-" * 50)
 
-def rechercher_utilisateur(users):
-    cible = input("\nLogin ou nom à chercher : ").lower()
-    trouve = False
-    for u in users:
-        if cible in u['login'] or cible in u['nom'].lower():
-            print(f"-> Trouvé : {u['prenom']} {u['nom']} (Role: {u['role']})")
-            trouve = True
-    if not trouve: print("Introuvable.")
+def secure_account(user: dict) -> str:
+    password = generate_password()
+    user["pwd_hash"] = hash_password(password)
+    user["pwd_valid_until"] = password_validity()
+    return password
 
-def modifier_supprimer(users):
-    login_cible = input("\nLogin de l'utilisateur cible : ")
-    index = next((i for i, u in enumerate(users) if u['login'] == login_cible), -1)
-    
-    if index == -1:
-        print("Utilisateur introuvable.")
+
+def add_user(user: dict):
+    users_db.append(user)
+    save_users()
+
+
+# -------------------------------------------------------------
+# 5) UTILITAIRES / RECHERCHE
+# -------------------------------------------------------------
+
+def find_user_by_login(login: str) -> dict | None:
+    return next((u for u in users_db if u["login"] == login), None)
+
+
+def is_admin(user: dict) -> bool:
+    return user["role"] in ("SUPER_ADMIN", "ADMIN_REGION")
+
+
+def same_site(user: dict, other: dict) -> bool:
+    return user["site"].lower() == other["site"].lower()
+
+
+# -------------------------------------------------------------
+# 6) CRUD UTILISATEURS (AVEC CONTRÔLE DES RÔLES)
+# -------------------------------------------------------------
+
+def afficher_tous(current_user: dict):
+    print("\n===== LISTE DES UTILISATEURS =====")
+    if not users_db:
+        print("Aucun utilisateur créé.")
         return
 
-    action = input("Action : (S)upprimer / (M)odifier rôle ? ").upper()
-    if action == 'S':
-        if input("Confirmer (o/n) ? ") == 'o':
-            del users[index]
-            sauvegarder_donnees(users)
-            print("Supprimé.")
-    elif action == 'M':
-        users[index]['role'] = input("Nouveau rôle : ")
-        sauvegarder_donnees(users)
-        print("Modifié.")
+    if current_user["role"] == "SUPER_ADMIN":
+        to_show = users_db
+    else:  # ADMIN_REGION
+        to_show = [u for u in users_db if same_site(current_user, u)]
 
-# --- SYSTÈME DE LOGIN ---
+    for u in to_show:
+        print(u)
 
-def creer_admin_par_defaut(users):
-    """Crée un admin de secours si la base est vide."""
-    print("⚠ Base vide : Création d'un administrateur par défaut.")
-    login = "sadmin"
-    pwd_clair = "admin123" # Mot de passe par défaut
-    pwd_hash = hacher_pwd(pwd_clair)
-    
-    admin_defaut = {
-        "login": login,
+
+def modifier_utilisateur(current_user: dict):
+    if not users_db:
+        print("Aucun utilisateur à modifier.")
+        return
+
+    login = input("Login de l'utilisateur à modifier : ").strip()
+    user = find_user_by_login(login)
+
+    if not user:
+        print("❌ Utilisateur non trouvé.")
+        return
+
+    # Restrictions pour ADMIN_REGION
+    if current_user["role"] == "ADMIN_REGION":
+        if user["role"] == "SUPER_ADMIN":
+            print("⛔ Vous ne pouvez pas modifier un SUPER_ADMIN.")
+            return
+        if not same_site(current_user, user):
+            print("⛔ Vous ne pouvez modifier que les utilisateurs de votre site.")
+            return
+
+    print(f"\n--- Modification de {login} ---")
+
+    new_prenom = input(f"Prénom ({user['prenom']}): ").strip()
+    new_nom = input(f"Nom ({user['nom']}): ").strip()
+    new_site = input(f"Site ({user['site']}): ").strip()
+    new_role = input(f"Rôle ({user['role']}): ").strip()
+
+    if new_prenom:
+        user["prenom"] = new_prenom.capitalize()
+    if new_nom:
+        user["nom"] = new_nom.capitalize()
+    if new_site:
+        if new_site.lower() in VALID_SITES:
+            # Si ADMIN_REGION, on interdit de changer vers un autre site
+            if current_user["role"] == "ADMIN_REGION" and new_site.capitalize() != current_user["site"]:
+                print("⚠ Site ignoré : vous ne pouvez pas changer vers une autre région.")
+            else:
+                user["site"] = new_site.capitalize()
+        else:
+            print("⚠ Site ignoré (invalide).")
+    if new_role:
+        new_role_up = new_role.upper()
+        if new_role_up in VALID_ROLES:
+            if current_user["role"] == "ADMIN_REGION" and new_role_up == "SUPER_ADMIN":
+                print("⚠ Vous ne pouvez pas attribuer le rôle SUPER_ADMIN.")
+            else:
+                user["role"] = new_role_up
+        else:
+            print("⚠ Rôle ignoré (invalide).")
+
+    save_users()
+    print("✔ Modification faite.")
+
+
+def supprimer_utilisateur(current_user: dict):
+    if not users_db:
+        print("Aucun utilisateur créé.")
+        return
+
+    login = input("Login à supprimer : ").strip()
+    user = find_user_by_login(login)
+
+    if not user:
+        print("❌ Utilisateur non trouvé.")
+        return
+
+    # Restrictions pour ADMIN_REGION
+    if current_user["role"] == "ADMIN_REGION":
+        if user["role"] == "SUPER_ADMIN":
+            print("⛔ Vous ne pouvez pas supprimer un SUPER_ADMIN.")
+            return
+        if not same_site(current_user, user):
+            print("⛔ Vous ne pouvez supprimer que les utilisateurs de votre site.")
+            return
+
+    users_db.remove(user)
+    save_users()
+    print(f"✔ Utilisateur {login} supprimé avec succès.")
+
+
+# -------------------------------------------------------------
+# 7) FONCTIONS DE CRÉATION (AVEC CONTRÔLE DES RÔLES)
+# -------------------------------------------------------------
+
+def creer_admin(current_user: dict):
+    if not is_admin(current_user):
+        print("⛔ Accès refusé.")
+        return
+
+    print("\n--- Création d'un ADMIN ---")
+    prenom = input("Prénom : ").strip()
+    nom = input("Nom : ").strip()
+
+    # Site & rôle selon le type d'admin connecté
+    if current_user["role"] == "SUPER_ADMIN":
+        site = get_valid_site()
+        role = "ADMIN_REGION"
+        if site.lower() == "paris":
+            if input("Super admin ? (o/n) : ").strip().lower() == "o":
+                role = "SUPER_ADMIN"
+    else:  # ADMIN_REGION
+        site = current_user["site"]
+        role = "ADMIN_REGION"
+        print(f"(Site forcé à votre région : {site})")
+
+    user = create_user_basic(prenom, nom, role, site)
+    pwd = secure_account(user)
+    add_user(user)
+
+    print(f"\n✔ Admin créé : {user['login']} ({role} - {site})")
+    print(f"Mot de passe initial : {pwd}\n")
+
+
+def creer_user(current_user: dict):
+    if not is_admin(current_user):
+        print("⛔ Accès refusé.")
+        return
+
+    print("\n--- Création d'un USER ---")
+    prenom = input("Prénom : ").strip()
+    nom = input("Nom : ").strip()
+
+    if current_user["role"] == "SUPER_ADMIN":
+        site = get_valid_site()
+    else:  # ADMIN_REGION
+        site = current_user["site"]
+        print(f"(Site forcé à votre région : {site})")
+
+    user = create_user_basic(prenom, nom, "USER", site)
+    pwd = secure_account(user)
+    add_user(user)
+
+    print(f"\n✔ Utilisateur créé : {user['login']} (USER - {site})")
+    print(f"Mot de passe : {pwd}\n")
+
+
+# -------------------------------------------------------------
+# 8) AUTHENTIFICATION
+# -------------------------------------------------------------
+
+def create_default_super_admin():
+    """Création d'un SUPER_ADMIN par défaut si la base est vide."""
+    print("⚠ Aucun utilisateur trouvé : création d'un SUPER_ADMIN par défaut.")
+    default_user = {
+        "login": "sadmin",
         "prenom": "Super",
         "nom": "Admin",
-        "role": "admin",
-        "pwd_hash": pwd_hash,
-        "date_validite": calculer_expiration()
+        "role": "SUPER_ADMIN",
+        "site": "Paris",
+        "pwd_hash": hash_password("admin123"),
+        "pwd_valid_until": password_validity()
     }
-    users.append(admin_defaut)
-    sauvegarder_donnees(users)
-    print(f"-> Login : {login}")
-    print(f"-> Pass  : {pwd_clair}")
-    print("Veuillez vous connecter avec ces identifiants.\n")
+    users_db.append(default_user)
+    save_users()
+    print("   Login : sadmin")
+    print("   Mot de passe : admin123\n")
 
-def ecran_connexion(users):
-    """Gère l'authentification au lancement."""
-    print("\n🔐 === AUTHENTIFICATION REQUISE ===")
-    
-    tentatives = 3
-    while tentatives > 0:
-        login_input = input("Login : ")
-        pwd_input = input("Mot de passe : ")
-        hash_input = hacher_pwd(pwd_input)
-        
-        for user in users:
-            if user['login'] == login_input and user['pwd_hash'] == hash_input:
-                # Vérification des droits
-                if user['role'] == 'admin':
-                    print(f"\nBienvenue {user['prenom']}.")
-                    return True
-                else:
-                    print("⛔ Accès refusé : Seuls les admins peuvent accéder à ce menu.")
-                    return False
-        
-        print("❌ Identifiants incorrects.")
-        tentatives -= 1
-        print(f"Il reste {tentatives} tentative(s).")
-    
-    return False
 
-# --- PROGRAMME PRINCIPAL ---
+def login_screen() -> dict | None:
+    """Affiche l'écran de login et renvoie l'utilisateur connecté ou None."""
+    if not users_db:
+        create_default_super_admin()
 
-def main():
-    db_users = charger_donnees()
+    print("\n🔐 ===== AUTHENTIFICATION =====")
+    attempts = 3
+    while attempts > 0:
+        login = input("Login : ").strip()
+        pwd = input("Mot de passe : ").strip()
+        pwd_hash = hash_password(pwd)
 
-    # 1. Si base vide -> Création admin secours
-    if not db_users:
-        creer_admin_par_defaut(db_users)
-        db_users = charger_donnees() # Recharger pour inclure le nouvel admin
+        user = next(
+            (u for u in users_db if u["login"] == login and u["pwd_hash"] == pwd_hash),
+            None
+        )
 
-    # 2. Écran de connexion
-    acces_autorise = ecran_connexion(db_users)
+        if user:
+            if not is_admin(user):
+                print("⛔ Accès refusé : seuls les ADMIN et SUPER_ADMIN ont accès au menu.")
+                return None
 
-    # 3. Si connecté -> Menu Gestion
-    if acces_autorise:
-        while True:
-            print("\n--- MENU ADMIN ---")
-            print("1. Créer Utilisateur")
-            print("2. Liste Utilisateurs")
-            print("3. Rechercher")
-            print("4. Modifier/Supprimer")
-            print("5. Quitter")
-            
-            choix = input("Choix : ")
-            if choix == '1': ajouter_utilisateur(db_users)
-            elif choix == '2': lister_utilisateurs(db_users)
-            elif choix == '3': rechercher_utilisateur(db_users)
-            elif choix == '4': modifier_supprimer(db_users)
-            elif choix == '5': break
-    else:
-        print("Fermeture du programme.")
+            print(f"\n✅ Connexion réussie. Bonjour {user['prenom']} "
+                  f"({user['role']} - {user['site']}).")
+            return user
+
+        attempts -= 1
+        print(f"❌ Identifiants incorrects. Tentatives restantes : {attempts}")
+
+    print("⛔ Trop de tentatives. Fermeture.")
+    return None
+
+
+# -------------------------------------------------------------
+# 9) MENU PRINCIPAL (APRÈS CONNEXION)
+# -------------------------------------------------------------
+
+def menu(current_user: dict):
+    while True:
+        print("\n===== MENU GESTION UTILISATEURS =====")
+        print(f"Connecté en tant que : {current_user['login']} "
+              f"({current_user['role']} - {current_user['site']})")
+        print("1. Créer un ADMIN")
+        print("2. Créer un USER")
+        print("3. Afficher tous les utilisateurs")
+        print("4. Modifier un utilisateur")
+        print("5. Supprimer un utilisateur")
+        print("6. Déconnexion")
+
+        choix = input("Votre choix : ")
+
+        if choix == "1":
+            creer_admin(current_user)
+        elif choix == "2":
+            creer_user(current_user)
+        elif choix == "3":
+            afficher_tous(current_user)
+        elif choix == "4":
+            modifier_utilisateur(current_user)
+        elif choix == "5":
+            supprimer_utilisateur(current_user)
+        elif choix == "6":
+            print("🔓 Déconnexion en cours...\n")
+            return
+        else:
+            print("❌ Choix invalide.")
+
+
+# -------------------------------------------------------------
+# 10) LANCEMENT
+# -------------------------------------------------------------
 
 if __name__ == "__main__":
-    main()
+    load_users()
+    while True:
+        current_user = login_screen()
+        if not current_user:
+            print("Fermeture du programme.")
+            break
+        menu(current_user)
